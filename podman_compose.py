@@ -121,7 +121,7 @@ def parse_short_mount(mount_str, basedir):
     elif len(mount_a) == 3:
         mount_src, mount_dst, mount_opt = mount_a
     else:
-        raise ValueError("could not parse mount " + mount_str)
+        raise ValueError(f"could not parse mount {mount_str}")
     if mount_src and dir_re.match(mount_src):
         # Specify an absolute path mapping
         # - /opt/data:/var/lib/mysql
@@ -150,7 +150,7 @@ def parse_short_mount(mount_str, basedir):
             propagation_opts.append(opt)
         else:
             # TODO: ignore
-            raise ValueError("unknown mount option " + opt)
+            raise ValueError(f"unknown mount option {opt}")
     mount_opt_dict["bind"] = dict(propagation=",".join(propagation_opts))
     return dict(type=mount_type, source=mount_src, target=mount_dst, **mount_opt_dict)
 
@@ -192,7 +192,7 @@ def fix_mount_dict(compose, mount_dict, proj_name, srv_name):
             ext_name = (
                 external.get("name", None) if isinstance(external, dict) else None
             )
-            vol["name"] = ext_name if ext_name else f"{proj_name}_{source}"
+            vol["name"] = ext_name or f"{proj_name}_{source}"
     return mount_dict
 
 
@@ -259,14 +259,13 @@ def norm_as_list(src):
     return a list of ["key1=value1", "key2"]
     """
     if src is None:
-        dst = []
+        return []
     elif is_dict(src):
-        dst = [(f"{k}={v}" if v is not None else k) for k, v in src.items()]
+        return [(f"{k}={v}" if v is not None else k) for k, v in src.items()]
     elif is_list(src):
-        dst = list(src)
+        return list(src)
     else:
-        dst = [src]
-    return dst
+        return [src]
 
 
 def norm_as_dict(src):
@@ -320,9 +319,7 @@ def transform(args, project_name, given_containers):
         pod_name = f"pod_{project_name}"
         pod = dict(name=pod_name)
         pods = [pod]
-    containers = []
-    for cnt in given_containers:
-        containers.append(dict(cnt, pod=pod_name))
+    containers = [dict(cnt, pod=pod_name) for cnt in given_containers]
     return pods, containers
 
 
@@ -369,8 +366,7 @@ def assert_volume(compose, mount_dict):
         ]
         for item in norm_as_list(labels):
             args.extend(["--label", item])
-        driver = vol.get("driver", None)
-        if driver:
+        if driver := vol.get("driver", None):
             args.extend(["--driver", driver])
         driver_opts = vol.get("driver_opts", None) or {}
         for opt, value in driver_opts.items():
@@ -389,19 +385,17 @@ def mount_desc_to_mount_args(
     target = mount_desc["target"]
     opts = []
     if mount_desc.get(mount_type, None):
-        # TODO: we might need to add mount_dict[mount_type]["propagation"] = "z"
-        mount_prop = mount_desc.get(mount_type, {}).get("propagation", None)
-        if mount_prop:
+        if mount_prop := mount_desc.get(mount_type, {}).get(
+            "propagation", None
+        ):
             opts.append(f"{mount_type}-propagation={mount_prop}")
     if mount_desc.get("read_only", False):
         opts.append("ro")
     if mount_type == "tmpfs":
         tmpfs_opts = mount_desc.get("tmpfs", {})
-        tmpfs_size = tmpfs_opts.get("size", None)
-        if tmpfs_size:
+        if tmpfs_size := tmpfs_opts.get("size", None):
             opts.append(f"tmpfs-size={tmpfs_size}")
-        tmpfs_mode = tmpfs_opts.get("mode", None)
-        if tmpfs_mode:
+        if tmpfs_mode := tmpfs_opts.get("mode", None):
             opts.append(f"tmpfs-mode={tmpfs_mode}")
     opts = ",".join(opts)
     if mount_type == "bind":
@@ -410,7 +404,7 @@ def mount_desc_to_mount_args(
         return f"type=volume,source={source},destination={target},{opts}".rstrip(",")
     if mount_type == "tmpfs":
         return f"type=tmpfs,destination={target},{opts}".rstrip(",")
-    raise ValueError("unknown mount type:" + mount_type)
+    raise ValueError(f"unknown mount type:{mount_type}")
 
 
 def container_to_ulimit_args(cnt, podman_args):
@@ -419,13 +413,13 @@ def container_to_ulimit_args(cnt, podman_args):
         # ulimit can be a single value, i.e. ulimit: host
         if is_str(ulimit):
             podman_args.extend(["--ulimit", ulimit])
-        # or a dictionary or list:
         else:
             ulimit = norm_as_dict(ulimit)
             ulimit = [
-                "{}={}".format(ulimit_key, norm_ulimit(inner_value))
+                f"{ulimit_key}={norm_ulimit(inner_value)}"
                 for ulimit_key, inner_value in ulimit.items()
             ]
+
             for i in ulimit:
                 podman_args.extend(["--ulimit", i])
 
@@ -435,7 +429,7 @@ def mount_desc_to_volume_args(
 ):  # pylint: disable=unused-argument
     mount_type = mount_desc["type"]
     if mount_type not in ("bind", "volume"):
-        raise ValueError("unknown mount type:" + mount_type)
+        raise ValueError(f"unknown mount type:{mount_type}")
     vol = mount_desc.get("_vol", None) if mount_type == "volume" else None
     source = vol["name"] if vol else mount_desc.get("source", None)
     if not source:
@@ -491,11 +485,9 @@ def get_mount_args(compose, cnt, volume):
             args = volume["target"]
             tmpfs_opts = volume.get("tmpfs", {})
             opts = []
-            size = tmpfs_opts.get("size", None)
-            if size:
+            if size := tmpfs_opts.get("size", None):
                 opts.append(f"size={size}")
-            mode = tmpfs_opts.get("mode", None)
-            if mode:
+            if mode := tmpfs_opts.get("mode", None):
                 opts.append(f"mode={mode}")
             if opts:
                 args += ":" + ",".join(opts)
@@ -527,7 +519,7 @@ def get_secret_args(compose, cnt, secret):
         if not target:
             dest_file = f"/run/secrets/{secret_name}"
         elif not target.startswith("/"):
-            sec = target if target else secret_name
+            sec = target or secret_name
             dest_file = f"/run/secrets/{sec}"
         else:
             dest_file = target
@@ -537,7 +529,7 @@ def get_secret_args(compose, cnt, secret):
         )
         volume_ref = ["--volume", f"{source_file}:{dest_file}:ro,rprivate,rbind"]
         if uid or gid or mode:
-            sec = target if target else secret_name
+            sec = target or secret_name
             log(
                 f'WARNING: Service {cnt["_service"]} uses secret "{sec}" with uid, gid, or mode.'
                 + " These fields are not supported by this implementation of the Compose file"
@@ -567,17 +559,16 @@ def get_secret_args(compose, cnt, secret):
             raise ValueError(err_str.format(target, secret_name))
         if target:
             log(
-                'WARNING: Service "{}" uses target: "{}" for secret: "{}".'.format(
-                    cnt["_service"], target, secret_name
+                (
+                    f'WARNING: Service "{cnt["_service"]}" uses target: "{target}" for secret: "{secret_name}".'
+                    + " That is un-supported and a no-op and is ignored."
                 )
-                + " That is un-supported and a no-op and is ignored."
             )
-        return ["--secret", "{}{}".format(secret_name, secret_opts)]
+
+        return ["--secret", f"{secret_name}{secret_opts}"]
 
     raise ValueError(
-        'ERROR: unparseable secret: "{}", service: "{}"'.format(
-            secret_name, cnt["_service"]
-        )
+        f'ERROR: unparseable secret: "{secret_name}", service: "{cnt["_service"]}"'
     )
 
 
@@ -599,9 +590,7 @@ def container_to_res_args(cnt, podman_args):
     reservations = res.get("reservations", None) or {}
     # cpus_res_v3 = try_float(reservations.get('cpus', None), None)
     mem_res_v3 = reservations.get("memory", None)
-    # add args
-    cpus = cpus_limit_v3 or cpus_limit_v2
-    if cpus:
+    if cpus := cpus_limit_v3 or cpus_limit_v2:
         podman_args.extend(
             (
                 "--cpus",
@@ -615,16 +604,14 @@ def container_to_res_args(cnt, podman_args):
                 str(cpu_shares_v2),
             )
         )
-    mem = mem_limit_v3 or mem_limit_v2
-    if mem:
+    if mem := mem_limit_v3 or mem_limit_v2:
         podman_args.extend(
             (
                 "-m",
                 str(mem).lower(),
             )
         )
-    mem_res = mem_res_v3 or mem_res_v2
-    if mem_res:
+    if mem_res := mem_res_v3 or mem_res_v2:
         podman_args.extend(
             (
                 "--memory-reservation",
@@ -709,8 +696,7 @@ def assert_cnt_nets(compose, cnt):
                 args.extend(["--label", item])
             if net_desc.get("internal", None):
                 args.append("--internal")
-            driver = net_desc.get("driver", None)
-            if driver:
+            if driver := net_desc.get("driver", None):
                 args.extend(("--driver", driver))
             ipam_config_ls = (net_desc.get("ipam", None) or {}).get(
                 "config", None
@@ -734,8 +720,7 @@ def assert_cnt_nets(compose, cnt):
 
 def get_net_args(compose, cnt):
     service_name = cnt["service_name"]
-    net = cnt.get("network_mode", None)
-    if net:
+    if net := cnt.get("network_mode", None):
         if net == "host":
             return ["--network", net]
         if net.startswith("slirp4netns:"):
@@ -912,14 +897,17 @@ def container_to_args(compose, cnt, detached=True):
     healthcheck = cnt.get("healthcheck", None) or {}
     if not is_dict(healthcheck):
         raise ValueError("'healthcheck' must be an key-value mapping")
-    healthcheck_test = healthcheck.get("test", None)
-    if healthcheck_test:
+    if healthcheck_test := healthcheck.get("test", None):
         # If it's a string, it's equivalent to specifying CMD-SHELL
         if is_str(healthcheck_test):
             # podman does not add shell to handle command with whitespace
             podman_args.extend(
-                ["--healthcheck-command", "/bin/sh -c " + cmd_quote(healthcheck_test)]
+                [
+                    "--healthcheck-command",
+                    f"/bin/sh -c {cmd_quote(healthcheck_test)}",
+                ]
             )
+
         elif is_list(healthcheck_test):
             healthcheck_test = healthcheck_test.copy()
             # If it's a list, first item is either NONE, CMD or CMD-SHELL.
@@ -928,12 +916,12 @@ def container_to_args(compose, cnt, detached=True):
                 podman_args.append("--no-healthcheck")
             elif healthcheck_type == "CMD":
                 cmd_q = "' '".join([cmd_quote(i) for i in healthcheck_test])
-                podman_args.extend(["--healthcheck-command", "/bin/sh -c " + cmd_q])
+                podman_args.extend(["--healthcheck-command", f"/bin/sh -c {cmd_q}"])
             elif healthcheck_type == "CMD-SHELL":
                 if len(healthcheck_test) != 1:
                     raise ValueError("'CMD_SHELL' takes a single string after it")
                 cmd_q = cmd_quote(healthcheck_test[0])
-                podman_args.extend(["--healthcheck-command", "/bin/sh -c " + cmd_q])
+                podman_args.extend(["--healthcheck-command", f"/bin/sh -c {cmd_q}"])
             else:
                 raise ValueError(
                     f"unknown healthcheck test type [{healthcheck_type}],\
@@ -994,8 +982,7 @@ def flat_deps(services, with_extends=False):
         deps = set()
         srv["_deps"] = deps
         if with_extends:
-            ext = srv.get("extends", {}).get("service", None)
-            if ext:
+            if ext := srv.get("extends", {}).get("service", None):
                 if ext != name:
                     deps.add(ext)
                 continue
@@ -1100,8 +1087,7 @@ class Podman:
                 "{{.Name}}",
             ],
         ).decode("utf-8")
-        volumes = output.splitlines()
-        return volumes
+        return output.splitlines()
 
 
 def normalize_service(service, sub_dir=""):
